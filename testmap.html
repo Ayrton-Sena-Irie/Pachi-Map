@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google Maps ピン登録システム</title>
+    <style>
+        #map {
+            height: 80vh;
+            width: 100%;
+        }
+        #controls {
+            margin: 10px;
+        }
+        #searchResults {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <input type="text" id="searchInput" placeholder="住所または郵便番号を入力">
+        <button id="searchButton">検索</button>
+        <div>
+            <input type="text" id="nameSearch" placeholder="台の名前で検索">
+            <input type="text" id="outputSearch" placeholder="出玉情報で検索">
+            <input type="text" id="rotationSearch" placeholder="平均回転数で検索">
+            <button id="infoSearchButton">情報で検索</button>
+        </div>
+        <div id="searchResults"></div>
+    </div>
+    <div id="map"></div>
+
+    <script>
+        let map;
+        let markers = [];
+        let infoWindows = [];
+        let markerData = new Map(); // ピンごとの登録情報を保持
+
+        function initMap() {
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: { lat: 35.6895, lng: 139.6917 }, // 東京を中心に設定
+                zoom: 13,
+                mapId: '4fa93ea27ad7c8b'
+            });
+
+            // マップクリックイベント
+            map.addListener('click', (event) => {
+                addMarker(event.latLng);
+            });
+
+            // 既存のピンを追加する例
+            addPredefinedMarker({ lat: 35.6895, lng: 139.6917 }, "既存のピン 1");
+            addPredefinedMarker({ lat: 35.6995, lng: 139.7017 }, "既存のピン 2");
+        }
+
+        function addMarker(location) {
+            const marker = new google.maps.Marker({
+                position: location,
+                map: map
+            });
+
+            attachInfoWindow(marker);
+
+            markers.push(marker);
+            markerData.set(location.toString(), []);
+        }
+
+        function addPredefinedMarker(location, title) {
+            const marker = new google.maps.Marker({
+                position: location,
+                map: map,
+                title: title
+            });
+
+            attachInfoWindow(marker);
+
+            markers.push(marker);
+            markerData.set(location.toString(), []);
+        }
+
+        function attachInfoWindow(marker) {
+            const infoWindowContent = `
+                <div>
+                    <h4>${marker.title || "情報を登録"}</h4>
+                    <form onsubmit="registerInfo(event, this, '${marker.getPosition().toString()}')">
+                        <label>台の名前:</label><br>
+                        <input type="text" name="name"><br>
+                        <label>出玉情報(発):</label><br>
+                        <input type="text" name="output"><br>
+                        <label>平均回転数(1k):</label><br>
+                        <input type="text" name="rotation"><br>
+                        <button type="submit">登録</button>
+                    </form>
+                    <hr>
+                    <h4>登録された情報</h4>
+                    <div id="info-${marker.getPosition().toString().replace(/[\(\)\s]/g, '')}"></div>
+                    <button onclick="deleteMarker('${marker.getPosition().toString()}')">ピンを削除</button>
+                </div>`;
+
+            const infoWindow = new google.maps.InfoWindow({
+                content: infoWindowContent
+            });
+
+            marker.addListener('click', () => {
+                infoWindows.forEach(iw => iw.close()); // 他のウィンドウを閉じる
+                infoWindow.open(map, marker);
+            });
+
+            infoWindows.push(infoWindow);
+        }
+
+        function registerInfo(event, form, position) {
+            event.preventDefault();
+
+            const data = new FormData(form);
+            const name = data.get('name');
+            const output = data.get('output');
+            const rotation = data.get('rotation');
+
+            const infoContainerId = `info-${position.replace(/[\(\)\s]/g, '')}`;
+            const infoContainer = document.getElementById(infoContainerId);
+
+            const infoEntry = document.createElement('div');
+            infoEntry.textContent = `台の名前: ${name}, 出玉情報(発): ${output}, 平均回転数(1k): ${rotation}`;
+            infoContainer.appendChild(infoEntry);
+
+            markerData.get(position).push({ name, output, rotation });
+
+            form.reset();
+        }
+
+        function deleteMarker(position) {
+            // 削除するマーカーを検索
+            const markerIndex = markers.findIndex(marker => marker.getPosition().toString() === position);
+            if (markerIndex > -1) {
+                // マーカーを地図から削除
+                markers[markerIndex].setMap(null);
+                markers.splice(markerIndex, 1);
+
+                // 情報ウィンドウも削除
+                const infoWindowIndex = infoWindows.findIndex(iw => iw.getContent().includes(position));
+                if (infoWindowIndex > -1) {
+                    infoWindows.splice(infoWindowIndex, 1);
+                }
+
+                // マーカー情報を削除
+                markerData.delete(position);
+
+                alert('ピンを削除しました。');
+            } else {
+                alert('指定されたピンが見つかりませんでした。');
+            }
+        }
+
+        document.getElementById('searchButton').addEventListener('click', () => {
+            const address = document.getElementById('searchInput').value;
+            const geocoder = new google.maps.Geocoder();
+
+            geocoder.geocode({ address: address }, (results, status) => {
+                if (status === 'OK') {
+                    map.setCenter(results[0].geometry.location);
+                    addMarker(results[0].geometry.location);
+                } else {
+                    alert('Geocode was not successful for the following reason: ' + status);
+                }
+            });
+        });
+
+        document.getElementById('infoSearchButton').addEventListener('click', () => {
+            const nameSearch = document.getElementById('nameSearch').value;
+            const outputSearch = document.getElementById('outputSearch').value;
+            const rotationSearch = document.getElementById('rotationSearch').value;
+
+            const results = [];
+
+            for (const [position, data] of markerData.entries()) {
+                const matched = data.some(info =>
+                    (!nameSearch || info.name.includes(nameSearch)) &&
+                    (!outputSearch || info.output.includes(outputSearch)) &&
+                    (!rotationSearch || info.rotation.includes(rotationSearch))
+                );
+
+                if (matched) {
+                    const latLng = position.replace(/[\(\)]/g, '').split(', ').map(Number);
+                    results.push({ lat: latLng[0], lng: latLng[1] });
+                }
+            }
+
+            if (results.length > 0) {
+                if (results.length === 1) {
+                    map.setCenter(results[0]);
+                    map.setZoom(15);
+                } else {
+                    const bounds = new google.maps.LatLngBounds();
+                    results.forEach(location => bounds.extend(location));
+                    map.fitBounds(bounds);
+                }
+            } else {
+                alert('一致する情報が見つかりませんでした。');
+            }
+        });
+    </script>
+
+    <script async defer
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyATJXCrkBG4uF558J5R_U9pBEZA4Pf2t7I&callback=initMap">
+    </script>
+</body>
+</html>
